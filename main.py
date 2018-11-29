@@ -35,9 +35,24 @@ def get_reply(text, puid=None):
     return result
 
 
-@bot.register()
-def reply(msg):
-    print(msg)
+def handle_friends(msg):
+    """
+    处理好友请求
+    :return:
+    """
+    # 接受好友 (msg.card 为该请求的用户对象)
+    new_friend = bot.accept_friend(msg.card)
+    # 或 new_friend = msg.card.accept()
+    # 向新的好友发送消息
+    new_friend.send('哈哈哈')
+
+
+def handle_text(msg):
+    """
+    处理文本消息
+    :param msg:
+    :return:
+    """
     need_send = False
     if isinstance(msg.chat, Friend):
         need_send = True
@@ -62,6 +77,18 @@ def reply(msg):
             # 更新数据库
             SQLITE.update_wechat_group_status(group_puid=msg.sender.puid, status='nothing')
         msg.reply(text)
+
+
+@bot.register()
+def reply(msg):
+    print(msg)
+    # 处理好友请求
+    if msg.type == FRIENDS:
+        handle_friends(msg)
+    elif msg.type == TEXT:
+        handle_text(msg)
+    else:
+        pass
 
 
 # 堵塞线程，并进入 Python 命令行
