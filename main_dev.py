@@ -16,9 +16,11 @@ Bot.enable_puid(bot)
 SQLITE = Sqlite(db_name=DB_NAME)
 
 
-def get_reply(text):
+def get_reply(text, puid=None):
     try:
         request_params = TULING_REQUEST_PARAMS.copy()
+        if puid is not None:
+            request_params['userInfo']['userId'] = puid
         request_params['perception'] = {'inputText': {'text': str(text).replace('小小\u2005', '')}}
         print(request_params)
         result = request_sess.post(url=TULING_URL, data=json.dumps(request_params))
@@ -33,16 +35,7 @@ def get_reply(text):
     return result
 
 
-# 处理接龙游戏
-def idioms_solitaire(msg):
-    msg = Message
-    group = msg.sender
-    group_puid = group.puid
-
-    pass
-
-
-@bot.register(msg_types=TEXT)
+@bot.register()
 def reply(msg):
     print(msg)
     need_send = False
@@ -61,7 +54,7 @@ def reply(msg):
             if random.randint(1, 5) == 3:
                 need_send = True
     if need_send:
-        text = get_reply(msg.text)
+        text = get_reply(msg.text, msg.sender.puid)
         if '进入成语接龙模式：' in text:
             # 更新数据库
             SQLITE.update_wechat_group_status(group_puid=msg.sender.puid, status='idioms_solitaire')
