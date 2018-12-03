@@ -1,19 +1,29 @@
 import json
+import os
 import random
 
 import requests
 
 from wxpy import *
 
-from libs.config import TULING_REQUEST_PARAMS, TULING_URL, DB_NAME
+from libs import mongodb
+from libs.config import TULING_REQUEST_PARAMS, TULING_URL, DB_NAME, GUESS_IDIOM_MAX_TIMES
 from libs.sqlite import *
 
 request_sess = requests.session()
 
 bot = Bot(cache_path=True, console_qr=True)
 
+DEFAULT_PUID = 'default'
+
 Bot.enable_puid(bot)
 SQLITE = Sqlite(db_name=DB_NAME)
+DB_CLIENT = mongodb.MongoClient()
+
+IDIOT_PATH = 'idiots'
+# 成语文件
+IDIOT_FILES = [os.path.join(IDIOT_PATH, f) for f in os.listdir(IDIOT_PATH) if
+               os.path.isfile(os.path.join(IDIOT_PATH, f))]
 
 
 def get_reply(text, puid=None):
@@ -29,7 +39,7 @@ def get_reply(text, puid=None):
         result = result['results'][0]['values']['text']
     except Exception as e:
         print(str(e))
-        result = '我接口调不通啦~'
+        result = '我想安静一会~'
     if result == '如果你什么都不说，我也不知道怎么回答你呀':
         result = text
     return result
@@ -45,6 +55,57 @@ def handle_friends(msg):
     # 或 new_friend = msg.card.accept()
     # 向新的好友发送消息
     new_friend.send('哈哈哈')
+
+
+def handle_guess_idiom(msg):
+    """
+    猜成语
+    :return:
+    """
+    puid = msg.sender.puid
+    if msg.is_at and '退出猜成语' in msg.text:
+        # 游戏结束，数据库中关闭，聊天对象更新为nothing
+        DB_CLIENT.idiom_status_close_game(puid)
+        SQLITE.update_wechat_group_status(group_puid=msg.sender.puid, status='nothing')
+        msg.reply('本次游戏退出，下次我们继续哦~')
+        return
+    if puid is None:
+        puid = DEFAULT_PUID
+    instance = DB_CLIENT.get_idiom_status(puid)
+
+    subjuct_index = instance['play_times']
+    next_game = False
+    if instance['play_times'] > 0:
+        # 游戏已经在进行中了，直接判断游戏
+        if instance['answer'] == msg.text:
+            # 答题正确，给用户返回正确信息
+            result = '恭喜@{} 猜对咯，正确答案为：[{}]'.format(msg.member.name, instance['answer'])
+            msg.reply(result)
+            if instance['play_times'] < GUESS_IDIOM_MAX_TIMES:
+                next_game = True
+            else:
+                # 游戏结束，数据库中关闭，聊天对象更新为nothing
+                DB_CLIENT.idiom_status_close_game(puid)
+                SQLITE.update_wechat_group_status(group_puid=msg.sender.puid, status='nothing')
+        else:
+            # 答题失败，什么都不做
+            pass
+    else:
+        # 游戏还未开始，需要重新初始化游戏
+        next_game = True
+        msg.reply('猜成语答题开始')
+    if next_game:
+        # 继续选择游戏进行
+        index = random.randint(0, len(IDIOT_FILES))
+        game_file = IDIOT_FILES[index]
+        answer = DB_CLIENT.get_idiom(file_path=game_file)
+        if answer is not None:
+            # 更新游戏及游戏答案
+            DB_CLIENT.idiom_status_update_game(puid, answer['idiom'])
+            # 提醒答题开始
+            msg.reply('请看第{}题'.format(subjuct_index + 1))
+            # 将图片发送出去
+            msg.reply_image(game_file)
 
 
 def handle_text(msg):
@@ -63,8 +124,18 @@ def handle_text(msg):
         status = status['status']
         if status == 'idioms_solitaire':
             need_send = True
+        elif status == 'guess_idiom':
+            # 猜成语
+            handle_guess_idiom(msg)
+            need_send = False
         elif msg.is_at:
-            need_send = True
+            if '猜成语' in msg.text:
+                # 更新数据库
+                SQLITE.update_wechat_group_status(group_puid=msg.sender.puid, status='guess_idiom')
+                handle_guess_idiom(msg)
+                need_send = False
+            else:
+                need_send = True
         else:
             if random.randint(1, 5) == 3:
                 need_send = True
