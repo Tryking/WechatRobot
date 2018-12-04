@@ -1,13 +1,15 @@
 import json
 import os
 import random
+import threading
+import time
 
 import requests
 
 from wxpy import *
 
 from libs import mongodb
-from libs.config import TULING_REQUEST_PARAMS, TULING_URL, DB_NAME, GUESS_IDIOM_MAX_TIMES
+from libs.config import TULING_REQUEST_PARAMS, TULING_URL, DB_NAME, GUESS_IDIOM_MAX_TIMES, GUESS_IDIOM_HINT_TIME
 from libs.sqlite import *
 
 request_sess = requests.session()
@@ -45,6 +47,19 @@ def get_reply(text, puid=None):
     return result
 
 
+def guess_idiom_thread_hint(msg, puid, times):
+    """
+    定时判断当前成语是否被猜中，如果没有，则进行提醒
+    :return:
+    """
+    time.sleep(GUESS_IDIOM_HINT_TIME)
+    instance = DB_CLIENT.get_idiom_status(puid, init=False)
+    if instance and instance['play_times'] == times:
+        hint_word = '■■■' + instance['answer'][-1]
+        # 说明上次的还没猜对，进行提醒
+        msg.reply('这都过去 {} 秒了，还没猜出来？\n提醒一下：{}'.format(GUESS_IDIOM_HINT_TIME, hint_word))
+
+
 def handle_friends(msg):
     """
     处理好友请求
@@ -57,7 +72,7 @@ def handle_friends(msg):
     new_friend.send('哈哈哈')
 
 
-def handle_guess_idiom(msg):
+def handle_guess_idiom(msg, is_restart=False):
     """
     猜成语
     :return:
@@ -71,15 +86,21 @@ def handle_guess_idiom(msg):
         return
     if puid is None:
         puid = DEFAULT_PUID
-    instance = DB_CLIENT.get_idiom_status(puid)
-
+    if is_restart:
+        instance = DB_CLIENT.get_idiom_status(puid)
+    else:
+        instance = DB_CLIENT.get_idiom_status(puid, init=False)
+        if instance is None:
+            msg.reply('看来你不想玩儿猜成语了，我们聊天吧~')
+            SQLITE.update_wechat_group_status(group_puid=msg.sender.puid, status='nothing')
+            return
     subjuct_index = instance['play_times']
     next_game = False
     if instance['play_times'] > 0:
         # 游戏已经在进行中了，直接判断游戏
         if instance['answer'] == msg.text:
             # 答题正确，给用户返回正确信息
-            result = '恭喜@{} 猜对咯，正确答案为：[{}]'.format(msg.member.name, instance['answer'])
+            result = '哇哦~恭喜@{} 猜对咯，正确答案为：「{}」'.format(msg.member.name, instance['answer'])
             msg.reply(result)
             if instance['play_times'] < GUESS_IDIOM_MAX_TIMES:
                 next_game = True
@@ -106,6 +127,10 @@ def handle_guess_idiom(msg):
             msg.reply('请看第{}题'.format(subjuct_index + 1))
             # 将图片发送出去
             msg.reply_image(game_file)
+            t = threading.Thread(target=guess_idiom_thread_hint, args=(msg, puid, subjuct_index),
+                                 name='guess_idiom_hint_thread')
+            t.start()
+            t.join()
 
 
 def handle_text(msg):
@@ -132,7 +157,7 @@ def handle_text(msg):
             if '猜成语' in msg.text:
                 # 更新数据库
                 SQLITE.update_wechat_group_status(group_puid=msg.sender.puid, status='guess_idiom')
-                handle_guess_idiom(msg)
+                handle_guess_idiom(msg, is_restart=True)
                 need_send = False
             else:
                 need_send = True

@@ -1,5 +1,5 @@
 import os
-
+import datetime
 import pymongo
 
 from libs.config import MONGODB_HOST, MONGODB_PORT, MONGODB_USER, MONGODB_PWD, MONGODB_DB
@@ -23,14 +23,16 @@ class MongoClient(object):
         if user and user != '':
             self.db.authenticate(name=user, password=pwd)
 
-    def get_idiom_status(self, puid):
+    def get_idiom_status(self, puid, init=True):
         """
-        获取成语接龙实例(已经在进行的，如果没有正在进行的，需要new一个实例)
+        获取成语接龙实例(已经在进行的并且更新在5分钟之前的，如果没有正在进行的，需要new一个实例)
         :return:
         """
-        instance = self.db[IDIOM_RECORD].find_one(filter={'wechat_group': puid, 'status': 'open'})
-        if instance is None:
-            self.db[IDIOM_RECORD].insert_one({'wechat_group': puid, 'status': 'open', 'play_times': 0})
+        instance = self.db[IDIOM_RECORD].find_one(filter={'wechat_group': puid, 'status': 'open', 'update_time': {
+            '$gte': datetime.datetime.now() - datetime.timedelta(minutes=5)}})
+        if instance is None and init:
+            self.db[IDIOM_RECORD].insert_one(
+                {'wechat_group': puid, 'status': 'open', 'play_times': 0, 'update_time': datetime.datetime.now()})
             instance = self.db[IDIOM_RECORD].find_one(filter={'wechat_group': puid, 'status': 'open', 'play_times': 0})
         return instance
 
@@ -41,7 +43,8 @@ class MongoClient(object):
         :return:
         """
         self.db[IDIOM_RECORD].update_one(filter={'wechat_group': puid, 'status': 'open'},
-                                         update={'$inc': {'play_times': 1}})
+                                         update={'$inc': {'play_times': 1},
+                                                 '$set': {'update_time': datetime.datetime.now()}})
 
     def idiom_status_close_game(self, puid):
         """
@@ -50,7 +53,7 @@ class MongoClient(object):
         :return:
         """
         self.db[IDIOM_RECORD].update_one(filter={'wechat_group': puid, 'status': 'open'},
-                                         update={'$set': {'status': 'close'}})
+                                         update={'$set': {'status': 'close', 'update_time': datetime.datetime.now()}})
 
     def idiom_status_update_game(self, puid, answer):
         """
@@ -59,7 +62,8 @@ class MongoClient(object):
         :return:
         """
         self.db[IDIOM_RECORD].update_one(filter={'wechat_group': puid, 'status': 'open'},
-                                         update={'$inc': {'play_times': 1}, '$set': {'answer': answer}})
+                                         update={'$inc': {'play_times': 1},
+                                                 '$set': {'answer': answer, 'update_time': datetime.datetime.now()}})
 
     def save_idiom(self, file_path, idiom):
         """
