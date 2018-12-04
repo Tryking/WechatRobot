@@ -92,6 +92,8 @@ def handle_guess_idiom(msg, is_restart=False):
         instance = DB_CLIENT.get_idiom_status(puid, init=False)
         if instance is None:
             msg.reply('看来你不想玩儿猜成语了，我们聊天吧~')
+            # 游戏结束，数据库中关闭，聊天对象更新为nothing
+            DB_CLIENT.idiom_status_close_game(puid)
             SQLITE.update_wechat_group_status(group_puid=msg.sender.puid, status='nothing')
             return
     subjuct_index = instance['play_times']
@@ -125,6 +127,7 @@ def handle_guess_idiom(msg, is_restart=False):
             DB_CLIENT.idiom_status_update_game(puid, answer['idiom'])
             # 提醒答题开始
             msg.reply('请看第{}题'.format(subjuct_index + 1))
+            subjuct_index += 1
             # 将图片发送出去
             msg.reply_image(game_file)
             t = threading.Thread(target=guess_idiom_thread_hint, args=(msg, puid, subjuct_index),
